@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   CI_GCU:
+    if: github.repository_owner == 'PaddlePaddle'  # ← 仅上游组织触发
     runs-on:
       group: GCU
     steps:
