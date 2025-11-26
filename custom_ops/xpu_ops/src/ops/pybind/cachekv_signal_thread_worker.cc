@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "ops/pybind/cachekv_signal_thread_worker.h"
-#include <cuda_runtime_api.h>
+#include "ops/pybind/cuda_compat.h"
 #include "ops/remote_cache_kv_ipc.h"
 #include "ops/utility/env.h"
 XPU_DECLARE_BOOL(fmt_write_cache_completed_signal, false);
@@ -26,8 +26,12 @@ CacheKvSignalThreadWorker::CacheKvSignalThreadWorker() : stop(false) {
     xpu_current_device(&old_dev);
     auto ret = xpu_set_device(devid);
     PD_CHECK(ret == 0, "xpu_set_device failed.");
-    ret = cudaSetDevice(devid);
-    PD_CHECK(ret == 0, "cudaSetDevice failed.");
+#if FASTDEPLOY_XPU_HAS_CUDA
+    int cuda_ret = cudaSetDevice(devid);
+    PD_CHECK(cuda_ret == 0, "cudaSetDevice failed.");
+#else
+    (void)devid;
+#endif
 
     while (true) {
       std::function<void()> task;

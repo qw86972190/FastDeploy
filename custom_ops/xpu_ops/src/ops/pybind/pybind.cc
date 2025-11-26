@@ -14,7 +14,6 @@
 
 #include "ops/pybind/pybind.h"
 #include <paddle/phi/backends/xpu/xpu_context.h>
-#include "cuda_runtime_api.h"  // NOLINT
 #include "paddle/extension.h"
 
 namespace py = pybind11;
@@ -25,9 +24,17 @@ void custom_xpu_host_free(uintptr_t ptr);
 
 uintptr_t xpu_get_peer_mem_addr(uintptr_t ptr);
 
+namespace {
+#if FASTDEPLOY_XPU_HAS_CUDA
+constexpr unsigned int kCudaHostRegisterDefault = cudaHostRegisterDefault;
+#else
+constexpr unsigned int kCudaHostRegisterDefault = 0u;
+#endif
+}  // namespace
+
 void xpu_cuda_host_register(uintptr_t ptr,
                             size_t size,
-                            unsigned int flags = cudaHostRegisterDefault);
+                            unsigned int flags = kCudaHostRegisterDefault);
 
 void prof_start();
 
@@ -609,7 +616,7 @@ PYBIND11_MODULE(fastdeploy_ops, m) {
         "Register pinned memory",
         py::arg("ptr"),
         py::arg("size"),
-        py::arg("flags") = cudaHostRegisterDefault);
+        py::arg("flags") = kCudaHostRegisterDefault);
 
   m.def("destroy_kv_signal_sender",
         &destroy_cachekv_signal_thread,

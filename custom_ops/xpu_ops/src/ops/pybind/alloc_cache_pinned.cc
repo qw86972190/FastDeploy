@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <sys/mman.h>          // NOLINT
-#include "cuda_runtime_api.h"  // NOLINT
+#include <sys/mman.h>  // NOLINT
 #include "ops/pybind/pybind.h"
 #include "paddle/extension.h"
 #include "xpu/runtime.h"
@@ -40,7 +39,16 @@ void custom_xpu_host_free(uintptr_t ptr) {
 }
 
 // 封装cudaHostRegister的Python函数，将可分页内存注册为锁页的
+#if FASTDEPLOY_XPU_HAS_CUDA
 void xpu_cuda_host_register(uintptr_t ptr, size_t size, unsigned int flags) {
   cudaError_t e = cudaHostRegister(reinterpret_cast<void*>(ptr), size, flags);
   PD_CHECK(e == cudaSuccess, cudaGetErrorString(e));
 }
+#else
+void xpu_cuda_host_register(uintptr_t ptr, size_t size, unsigned int flags) {
+  (void)ptr;
+  (void)size;
+  (void)flags;
+  PD_THROW("cudaHostRegister is not available in this build.");
+}
+#endif

@@ -1,4 +1,4 @@
-// Copyright (c) 2024 PaddlePaddle Authors. All Rights Reserved.
+// Copyright (c) 2025 PaddlePaddle Authors. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #pragma once
-#include "ops/pybind/cuda_compat.h"
-#include <xpu/runtime.h>
-#include <exception>
-#include "ops/pybind/cachekv_signal_thread_worker.h"
 
-// 自定义异常类，用于处理XPU错误
-class XPUError : public std::exception {
- public:
-  explicit XPUError(int error) : error_(error) {}
+#if !defined(FASTDEPLOY_XPU_HAS_CUDA)
+#if defined(__has_include)
+#if __has_include(<cuda_runtime_api.h>)
+#define FASTDEPLOY_XPU_HAS_CUDA 1
+#else
+#define FASTDEPLOY_XPU_HAS_CUDA 0
+#endif
+#else
+#define FASTDEPLOY_XPU_HAS_CUDA 0
+#endif
+#endif
 
-  const char *what() const noexcept override { return xpu_strerror(error_); }
+#if FASTDEPLOY_XPU_HAS_CUDA
+#include <cuda_runtime_api.h>
+#endif
 
- private:
-  int error_;
-};
