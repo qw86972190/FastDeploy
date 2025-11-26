@@ -97,26 +97,40 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
 
   // Handle stop sequences
   for (int bid = startidx; bid < endidx; bid++) {
-    if (stop_flags[bid]) continue;
-    const T* pre_ids_now = pre_ids + bid * pre_ids_len;
-    const T step_idx_now = step_idx[bid];
+    bool stop_flag_bid = false;
+    GM2LM(stop_flags + bid, &stop_flag_bid, sizeof(bool));
+    if (stop_flag_bid) continue;
+    T step_idx_now = 0;
+    GM2LM(step_idx + bid, &step_idx_now, sizeof(T));
     for (int tid = 0; tid < stop_seqs_bs; tid++) {
-      const int stop_seq_len = stop_seqs_len[bid * stop_seqs_bs + tid];
+      int stop_seq_len = 0;
+      GM2LM(stop_seqs_len + bid * stop_seqs_bs + tid, &stop_seq_len, sizeof(int));
       if (stop_seq_len <= 0) continue;
-      const T* stop_seq_now = stop_seqs + bid * stop_seqs_bs * stop_seqs_max_len + tid * stop_seqs_max_len;
       bool is_end = true;
       int count = 1;
       for (int k = stop_seq_len - 1; k >= 0; --k) {
-        if ((step_idx_now - count) < 0 ||
-            pre_ids_now[step_idx_now - count++] != stop_seq_now[k]) {
+        if ((step_idx_now - count) < 0) {
+          is_end = false;
+          break;
+        }
+        T pre_id_val = 0;
+        T stop_seq_val = 0;
+        int pre_ids_idx = step_idx_now - count++;
+        GM2LM(pre_ids + bid * pre_ids_len + pre_ids_idx, &pre_id_val, sizeof(T));
+        GM2LM(stop_seqs + bid * stop_seqs_bs * stop_seqs_max_len + tid * stop_seqs_max_len + k,
+              &stop_seq_val, sizeof(T));
+        if (pre_id_val != stop_seq_val) {
           is_end = false;
           break;
         }
       }
       if (is_end) {
-        stop_flags[bid] = true;
-        topk_ids[bid] = end_ids[0];
-        next_tokens[bid] = end_ids[0];
+        T end_id_val = 0;
+        bool value_true = true;
+        GM2LM(end_ids, &end_id_val, sizeof(T));
+        LM2GM(&end_id_val, topk_ids + bid, sizeof(T));
+        LM2GM(&end_id_val, next_tokens + bid, sizeof(T));
+        LM2GM(&value_true, stop_flags + bid, sizeof(bool));
         break;
       }
     }
