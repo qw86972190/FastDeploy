@@ -24,8 +24,15 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
                                           T* next_tokens,
                                           const T* end_ids,
                                           const int* seq_lens,
+                                          const T* pre_ids,
+                                          const int64_t* step_idx,
+                                          const T* stop_seqs,
+                                          const int* stop_seqs_len,
                                           const int bs,
                                           const int end_length,
+                                          const int stop_seqs_bs,
+                                          const int stop_seqs_max_len,
+                                          const int pre_ids_len,
                                           const bool beam_search,
                                           const bool prefill_one_step_stop) {
   int ncores = core_num();
@@ -54,6 +61,10 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
     GM2LM_ASYNC(seq_lens + i, seq_lens_lm, sizeof(int) * readlen);
     mfence();
     for (int j = 0; j < readlen; j++) {
+      int64_t step_idx_val = 0;
+      if (!prefill_one_step_stop) {
+        GM2LM(step_idx + i + j, &step_idx_val, sizeof(int64_t));
+      }
       if (prefill_one_step_stop) {
         stop_flags_lm[j] = true;
         if (seq_lens_lm[j] == 0) {
@@ -73,6 +84,45 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
         }
         if (!beam_search && is_in_end(topk_ids_lm[j], end_ids_lm, end_length)) {
           stop_flags_lm[j] = true;
+        }
+      }
+      if (!prefill_one_step_stop && !stop_flags_lm[j]) {
+        const int* stop_len_ptr = stop_seqs_len + (i + j) * stop_seqs_bs;
+        const T* stop_seq_ptr =
+            stop_seqs + (i + j) * stop_seqs_bs * stop_seqs_max_len;
+        const T* pre_ids_ptr = pre_ids + (i + j) * pre_ids_len;
+        for (int seq_id = 0; seq_id < stop_seqs_bs; ++seq_id) {
+          int stop_seq_len = 0;
+          GM2LM(stop_len_ptr + seq_id, &stop_seq_len, sizeof(int));
+          if (stop_seq_len <= 0) {
+            continue;
+          }
+          bool is_end = true;
+          int count = 1;
+          for (int token_idx = stop_seq_len - 1; token_idx >= 0; --token_idx) {
+            int64_t pre_idx = step_idx_val - count;
+            if (pre_idx < 0 || pre_idx >= pre_ids_len) {
+              is_end = false;
+              break;
+            }
+            T pre_token;
+            GM2LM(pre_ids_ptr + pre_idx, &pre_token, sizeof(T));
+            T expect_token;
+            GM2LM(stop_seq_ptr + seq_id * stop_seqs_max_len + token_idx,
+                  &expect_token,
+                  sizeof(T));
+            if (pre_token != expect_token) {
+              is_end = false;
+              break;
+            }
+            ++count;
+          }
+          if (is_end) {
+            stop_flags_lm[j] = true;
+            topk_ids_lm[j] = end_ids_lm[0];
+            next_tokens_lm[j] = end_ids_lm[0];
+            break;
+          }
         }
       }
     }

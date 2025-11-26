@@ -20,6 +20,8 @@ from fastdeploy.model_executor.ops.xpu import set_stop_value_multi_ends
 np.random.seed(1)
 
 bs = 64
+max_len = 16
+max_stop_num = 4
 
 # test beam_search=False
 topk_ids = paddle.arange(0, bs, dtype="int64")
@@ -27,10 +29,16 @@ next_tokens = paddle.full([bs], 0, dtype="int64")
 stop_flags = paddle.to_tensor(np.random.randint(0, 2, [bs]), "bool")
 seq_lens = paddle.to_tensor(np.random.randint(0, 5, [bs]), "int32")
 end_ids = paddle.to_tensor([0, 1, 2, 3, 4, 5], "int64")
+pre_ids = paddle.full([bs, max_len], 0, dtype="int64")
+step_idx = paddle.full([bs, 1], 0, dtype="int64")
+stop_seqs = paddle.full([bs, max_stop_num, max_len], -1, dtype="int64")
+stop_seqs_len = paddle.full([bs, max_stop_num], 0, dtype="int32")
 print("topk_ids\n", topk_ids)
 print("next_tokens\n", next_tokens)
 print("stop_flags\n", stop_flags)
-set_stop_value_multi_ends(topk_ids, stop_flags, seq_lens, end_ids, next_tokens, False)
+set_stop_value_multi_ends(
+    topk_ids, stop_flags, seq_lens, end_ids, next_tokens, pre_ids, step_idx, stop_seqs, stop_seqs_len, False
+)
 print("topk_ids\n", topk_ids)
 print("next_tokens\n", next_tokens)
 print("stop_flags\n", stop_flags)
@@ -269,6 +277,24 @@ print("next_tokens\n", next_tokens)
 print("stop_flags\n", stop_flags)
 print("seq_lens\n", seq_lens)
 print("end_ids\n", end_ids)
+# test stop sequences effect
+stop_tokens = paddle.full([bs, 1], 10, dtype="int64")
+stop_flags = paddle.full([bs], False, dtype="bool")
+seq_lens = paddle.full([bs], 2, dtype="int32")
+pre_ids_np = -np.ones((bs, max_len), dtype="int64")
+pre_ids_np[:, :2] = np.array([[5, 6]] * bs, dtype="int64")
+pre_ids = paddle.to_tensor(pre_ids_np)
+step_idx = paddle.full([bs, 1], 2, dtype="int64")
+stop_seqs_np = -np.ones((bs, max_stop_num, max_len), dtype="int64")
+stop_seqs_np[:, 0, :2] = np.array([[5, 6]] * bs, dtype="int64")
+stop_seqs = paddle.to_tensor(stop_seqs_np)
+stop_seqs_len_np = np.zeros((bs, max_stop_num), dtype="int32")
+stop_seqs_len_np[:, 0] = 2
+stop_seqs_len = paddle.to_tensor(stop_seqs_len_np)
+set_stop_value_multi_ends(
+    stop_tokens, stop_flags, seq_lens, end_ids, stop_tokens, pre_ids, step_idx, stop_seqs, stop_seqs_len, False
+)
+assert stop_flags.astype("int32").sum().item() == bs
 
 ref_topk_ids = np.array(
     [

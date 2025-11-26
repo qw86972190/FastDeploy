@@ -36,6 +36,7 @@ from fastdeploy.model_executor.layers.attention import get_attention_backend
 from fastdeploy.model_executor.layers.attention.base_attention_backend import (
     AttentionBackend,
 )
+from fastdeploy.model_executor.logits_processor import build_logits_processors
 from fastdeploy.model_executor.layers.rotary_embedding import get_rope, get_rope_3d
 from fastdeploy.model_executor.layers.sample.meta_data import SamplingMetadata
 from fastdeploy.model_executor.layers.sample.sampler import Sampler
@@ -251,6 +252,10 @@ def xpu_post_process(
         model_output.seq_lens_this_time,
         model_output.eos_token_id,
         model_output.next_tokens,
+        model_output.pre_ids,
+        model_output.step_idx,
+        model_output.stop_token_ids,
+        model_output.stop_seqs_len,
         False,
     )  # multi ends
 
@@ -572,6 +577,10 @@ class XPUModelRunner(ModelRunnerBase):
             self.share_inputs["penalty_score"][idx : idx + 1] = request.get("repetition_penalty", 1.0)
             self.share_inputs["frequency_score"][idx : idx + 1] = request.get("frequency_penalty", 0.0)
             self.share_inputs["presence_score"][idx : idx + 1] = request.get("presence_penalty", 0.0)
+            self.share_inputs["temp_scaled_logprobs"][idx : idx + 1] = request.get("temp_scaled_logprobs", False)
+            self.share_inputs["top_p_normalized_logprobs"][idx : idx + 1] = request.get(
+                "top_p_normalized_logprobs", False
+            )
 
             self.share_inputs["min_dec_len"][idx : idx + 1] = request.get("min_tokens", 1)
             self.share_inputs["max_dec_len"][idx : idx + 1] = request.get(
@@ -606,6 +615,8 @@ class XPUModelRunner(ModelRunnerBase):
                 ] = np.array(request.get("stop_token_ids"), dtype="int64")
             else:
                 self.share_inputs["stop_seqs_len"][idx : idx + 1, :] = 0
+
+            self.share_inputs["logits_processors_args"][idx] = request.get("logits_processors_args") or {}
 
         if len(multi_vision_inputs["images_lst"]) > 0:
             self.share_inputs["image_features"] = self.extract_vision_features(multi_vision_inputs)
@@ -695,6 +706,10 @@ class XPUModelRunner(ModelRunnerBase):
             self.share_inputs["presence_score"][idx : idx + 1] = get_attr_from_request(
                 request, "presence_penalty", 0.0
             )
+            self.share_inputs["temp_scaled_logprobs"][idx : idx + 1] = request.get("temp_scaled_logprobs", False)
+            self.share_inputs["top_p_normalized_logprobs"][idx : idx + 1] = request.get(
+                "top_p_normalized_logprobs", False
+            )
             self.share_inputs["min_dec_len"][idx : idx + 1] = request.get("min_tokens", 1)
             self.share_inputs["max_dec_len"][idx : idx + 1] = request.get(
                 "max_tokens", self.model_config.max_model_len
@@ -735,7 +750,7 @@ class XPUModelRunner(ModelRunnerBase):
                 ] = np.array(request.get("stop_token_ids"), dtype="int64")
             else:
                 self.share_inputs["stop_seqs_len"][idx : idx + 1, :] = 0
-
+            self.share_inputs["logits_processors_args"][idx] = request.get("logits_processors_args") or {}
         self.share_inputs["not_need_stop"][0] = True
 
     def _init_share_inputs(self, max_num_seqs: int):
@@ -780,6 +795,8 @@ class XPUModelRunner(ModelRunnerBase):
         self.share_inputs["presence_score"] = paddle.full(
             [max_num_seqs, 1], self.model_config.presence_score, dtype="float32"
         )
+        self.share_inputs["temp_scaled_logprobs"] = paddle.full([max_num_seqs, 1], False, dtype="bool")
+        self.share_inputs["top_p_normalized_logprobs"] = paddle.full([max_num_seqs, 1], False, dtype="bool")
 
         self.share_inputs["min_dec_len"] = paddle.full([max_num_seqs, 1], self.model_config.min_length, dtype="int64")
         self.share_inputs["max_dec_len"] = paddle.full(
@@ -863,6 +880,8 @@ class XPUModelRunner(ModelRunnerBase):
             -1,
             dtype="int64",
         )
+        self.share_inputs["logits_processors"] = build_logits_processors(self.fd_config)
+        self.share_inputs["logits_processors_args"] = [{} for _ in range(max_num_seqs)]
 
         if self.enable_mm:
             head_dim = self.model_config.head_dim
@@ -941,6 +960,10 @@ class XPUModelRunner(ModelRunnerBase):
             max_num_logprobs=self.max_logprobs if self.enable_logprob else None,
             enable_early_stop=self.enable_early_stop,
             stop_flags=self.share_inputs["stop_flags"],
+            temp_scaled_logprobs=self.share_inputs["temp_scaled_logprobs"],
+            top_p_normalized_logprobs=self.share_inputs["top_p_normalized_logprobs"],
+            logits_processors=self.share_inputs["logits_processors"],
+            share_inputs=self.share_inputs,
         )
 
     def load_model(self) -> None:
