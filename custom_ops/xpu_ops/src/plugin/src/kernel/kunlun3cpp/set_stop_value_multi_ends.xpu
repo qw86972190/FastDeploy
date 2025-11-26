@@ -24,8 +24,15 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
                                           T* next_tokens,
                                           const T* end_ids,
                                           const int* seq_lens,
+                                          const T* pre_ids,
+                                          const int pre_ids_len,
+                                          const T* step_idx,
+                                          const T* stop_seqs,
+                                          const int* stop_seqs_len,
                                           const int bs,
                                           const int end_length,
+                                          const int stop_seqs_bs,
+                                          const int stop_seqs_max_len,
                                           const bool beam_search,
                                           const bool prefill_one_step_stop) {
   int ncores = core_num();
@@ -44,6 +51,7 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
   __simd__ __local__ T next_tokens_lm[buf_len];
   __simd__ __local__ T end_ids_lm[256];
   __simd__ __local__ int seq_lens_lm[buf_len];
+  __simd__ __local__ T step_idx_lm[buf_len];
   GM2LM_ASYNC(end_ids, end_ids_lm, sizeof(T) * end_length);
 
   for (int64_t i = startidx; i < endidx; i += buf_len) {
@@ -52,8 +60,10 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
     GM2LM_ASYNC(topk_ids + i, topk_ids_lm, sizeof(T) * readlen);
     GM2LM_ASYNC(next_tokens + i, next_tokens_lm, sizeof(T) * readlen);
     GM2LM_ASYNC(seq_lens + i, seq_lens_lm, sizeof(int) * readlen);
+    GM2LM_ASYNC(step_idx + i, step_idx_lm, sizeof(T) * readlen);
     mfence();
     for (int j = 0; j < readlen; j++) {
+      int bid = i + j;
       if (prefill_one_step_stop) {
         stop_flags_lm[j] = true;
         if (seq_lens_lm[j] == 0) {
@@ -73,6 +83,8 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
         }
         if (!beam_search && is_in_end(topk_ids_lm[j], end_ids_lm, end_length)) {
           stop_flags_lm[j] = true;
+          topk_ids_lm[j] = end_ids_lm[0];
+          next_tokens_lm[j] = end_ids_lm[0];
         }
       }
     }
@@ -81,6 +93,33 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
     LM2GM_ASYNC(next_tokens_lm, next_tokens + i, sizeof(T) * readlen);
     LM2GM_ASYNC(stop_flags_lm, stop_flags + i, sizeof(bool) * readlen);
     mfence();
+  }
+
+  // Handle stop sequences
+  for (int bid = startidx; bid < endidx; bid++) {
+    if (stop_flags[bid]) continue;
+    const T* pre_ids_now = pre_ids + bid * pre_ids_len;
+    const T step_idx_now = step_idx[bid];
+    for (int tid = 0; tid < stop_seqs_bs; tid++) {
+      const int stop_seq_len = stop_seqs_len[bid * stop_seqs_bs + tid];
+      if (stop_seq_len <= 0) continue;
+      const T* stop_seq_now = stop_seqs + bid * stop_seqs_bs * stop_seqs_max_len + tid * stop_seqs_max_len;
+      bool is_end = true;
+      int count = 1;
+      for (int k = stop_seq_len - 1; k >= 0; --k) {
+        if ((step_idx_now - count) < 0 ||
+            pre_ids_now[step_idx_now - count++] != stop_seq_now[k]) {
+          is_end = false;
+          break;
+        }
+      }
+      if (is_end) {
+        stop_flags[bid] = true;
+        topk_ids[bid] = end_ids[0];
+        next_tokens[bid] = end_ids[0];
+        break;
+      }
+    }
   }
 }
 
@@ -91,8 +130,15 @@ __global__ void set_stop_value_multi_ends(bool* stop_flags,
       DATA_TYPE* next_tokens,                                    \
       const DATA_TYPE* end_ids,                                  \
       const int* seq_lens,                                       \
+      const DATA_TYPE* pre_ids,                                  \
+      const int pre_ids_len,                                     \
+      const DATA_TYPE* step_idx,                                 \
+      const DATA_TYPE* stop_seqs,                                \
+      const int* stop_seqs_len,                                  \
       const int bs,                                              \
       const int end_length,                                      \
+      const int stop_seqs_bs,                                    \
+      const int stop_seqs_max_len,                               \
       const bool beam_search,                                    \
       const bool prefill_one_step_stop);
 _XPU_DEF__SET_VALUE_BY_FLAGS_BOTH_(int64_t);
