@@ -366,6 +366,10 @@ void GetStopFlagsMulti(const paddle::Tensor& topk_ids,
                        const paddle::Tensor& seq_lens,
                        const paddle::Tensor& end_ids,
                        const paddle::Tensor& next_tokens,
+                       const paddle::Tensor& pre_ids,
+                       const paddle::Tensor& step_idx,
+                       const paddle::Tensor& stop_seqs,
+                       const paddle::Tensor& stop_seqs_len,
                        const bool beam_search);
 
 void RecoverDecodeTask(const paddle::Tensor& stop_flags,
@@ -1073,6 +1077,10 @@ PYBIND11_MODULE(fastdeploy_ops, m) {
         py::arg("seq_lens"),
         py::arg("end_ids"),
         py::arg("next_tokens"),
+        py::arg("pre_ids"),
+        py::arg("step_idx"),
+        py::arg("stop_seqs"),
+        py::arg("stop_seqs_len"),
         py::arg("beam_search"),
         "Set stop value multi ends function");
 
