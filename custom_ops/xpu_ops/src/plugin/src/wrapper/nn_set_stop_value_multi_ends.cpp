@@ -27,8 +27,15 @@ __attribute__((global)) void set_stop_value_multi_ends(
     T *next_tokens,
     const T *end_ids,
     const int *seq_lens,
+    const T *pre_ids,
+    const int pre_ids_len,
+    const T *step_idx,
+    const T *stop_seqs,
+    const int *stop_seqs_len,
     const int bs,
     const int end_length,
+    const int stop_seqs_bs,
+    const int stop_seqs_max_len,
     const bool beam_search,
     const bool prefill_one_step_stop);
 }  // namespace plugin
@@ -181,8 +188,8 @@ int set_stop_value_multi_ends(Context *ctx,
                               const bool beam_search) {
   WRAPPER_CHECK_CTX(ctx);
   WRAPPER_DUMP_FUNCTION_T1(ctx, "set_stop_value_multi_ends", T);
-  WRAPPER_DUMP_PARAM9(
-      ctx, stop_flags, topk_ids, next_tokens, end_ids, seq_lens, pre_ids, step_idx, stop_seqs, stop_seqs_len);
+  WRAPPER_DUMP_PARAM5(ctx, stop_flags, topk_ids, next_tokens, end_ids, seq_lens);
+  WRAPPER_DUMP_PARAM4(ctx, pre_ids, step_idx, stop_seqs, stop_seqs_len);
   WRAPPER_DUMP_PARAM6(ctx, bs, end_length, stop_seqs_bs, stop_seqs_max_len, pre_ids_len, beam_search);
   WRAPPER_DUMP(ctx);
   WRAPPER_CHECK_PTR(ctx, bool, bs, stop_flags);
