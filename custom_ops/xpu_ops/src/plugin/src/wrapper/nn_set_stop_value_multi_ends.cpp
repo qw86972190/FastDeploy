@@ -27,8 +27,15 @@ __attribute__((global)) void set_stop_value_multi_ends(
     T *next_tokens,
     const T *end_ids,
     const int *seq_lens,
+    const T *pre_ids,
+    const int pre_ids_len,
+    const T *step_idx,
+    const T *stop_seqs,
+    const int *stop_seqs_len,
     const int bs,
     const int end_length,
+    const int stop_seqs_bs,
+    const int stop_seqs_max_len,
     const bool beam_search,
     const bool prefill_one_step_stop);
 }  // namespace plugin
@@ -56,8 +63,15 @@ static int cpu_wrapper(Context *ctx,
                        T *next_tokens,
                        const T *end_ids,
                        const int *seq_lens,
+                       const T *pre_ids,
+                       const T *step_idx,
+                       const T *stop_seqs,
+                       const int *stop_seqs_len,
                        const int bs,
                        const int end_length,
+                       const int stop_seqs_bs,
+                       const int stop_seqs_max_len,
+                       const int pre_ids_len,
                        const bool beam_search,
                        const bool prefill_one_step_stop) {
   for (int i = 0; i < bs; i++) {
@@ -80,6 +94,36 @@ static int cpu_wrapper(Context *ctx,
       }
       if (!beam_search && is_in_end(topk_ids[i], end_ids, end_length)) {
         stop_flags[i] = true;
+        topk_ids[i] = end_ids[0];
+        next_tokens[i] = end_ids[0];
+      }
+    }
+    if (stop_flags[i]) {
+      continue;
+    }
+    const T step_idx_now = step_idx[i];
+    for (int tid = 0; tid < stop_seqs_bs; ++tid) {
+      const int stop_seq_len =
+          stop_seqs_len[i * stop_seqs_bs + tid];
+      if (stop_seq_len <= 0) {
+        continue;
+      }
+      bool is_end = true;
+      int count = 1;
+      for (int k = stop_seq_len - 1; k >= 0; --k) {
+        if ((step_idx_now - count) < 0 ||
+            pre_ids[i * pre_ids_len + step_idx_now - count++] !=
+                stop_seqs[i * stop_seqs_bs * stop_seqs_max_len +
+                          tid * stop_seqs_max_len + k]) {
+          is_end = false;
+          break;
+        }
+      }
+      if (is_end) {
+        stop_flags[i] = true;
+        topk_ids[i] = end_ids[0];
+        next_tokens[i] = end_ids[0];
+        break;
       }
     }
   }
@@ -93,8 +137,15 @@ static int xpu3_wrapper(Context *ctx,
                         T *next_tokens,
                         const T *end_ids,
                         const int *seq_lens,
+                        const T *pre_ids,
+                        const T *step_idx,
+                        const T *stop_seqs,
+                        const int *stop_seqs_len,
                         const int bs,
                         const int end_length,
+                        const int stop_seqs_bs,
+                        const int stop_seqs_max_len,
+                        const int pre_ids_len,
                         const bool beam_search,
                         const bool prefill_one_step_stop) {
   using XPU_TID = typename XPUIndexType<T>::type;
@@ -106,8 +157,15 @@ static int xpu3_wrapper(Context *ctx,
       reinterpret_cast<XPU_TID *>(next_tokens),
       reinterpret_cast<const XPU_TID *>(end_ids),
       seq_lens,
+      reinterpret_cast<const XPU_TID *>(pre_ids),
+      pre_ids_len,
+      reinterpret_cast<const XPU_TID *>(step_idx),
+      reinterpret_cast<const XPU_TID *>(stop_seqs),
+      stop_seqs_len,
       bs,
       end_length,
+      stop_seqs_bs,
+      stop_seqs_max_len,
       beam_search,
       prefill_one_step_stop);
   return api::SUCCESS;
@@ -120,19 +178,32 @@ int set_stop_value_multi_ends(Context *ctx,
                               T *next_tokens,
                               const T *end_ids,
                               const int *seq_lens,
+                              const T *pre_ids,
+                              const T *step_idx,
+                              const T *stop_seqs,
+                              const int *stop_seqs_len,
                               const int bs,
                               const int end_length,
+                              const int stop_seqs_bs,
+                              const int stop_seqs_max_len,
+                              const int pre_ids_len,
                               const bool beam_search) {
   WRAPPER_CHECK_CTX(ctx);
   WRAPPER_DUMP_FUNCTION_T1(ctx, "set_stop_value_multi_ends", T);
   WRAPPER_DUMP_PARAM5(
       ctx, stop_flags, topk_ids, next_tokens, end_ids, seq_lens);
-  WRAPPER_DUMP_PARAM3(ctx, bs, end_length, beam_search);
+  WRAPPER_DUMP_PARAM4(ctx, pre_ids, step_idx, stop_seqs, stop_seqs_len);
+  WRAPPER_DUMP_PARAM6(
+      ctx, bs, end_length, stop_seqs_bs, stop_seqs_max_len, pre_ids_len, beam_search);
   WRAPPER_DUMP(ctx);
   WRAPPER_CHECK_PTR(ctx, bool, bs, stop_flags);
   WRAPPER_CHECK_PTR(ctx, T, bs, topk_ids);
   WRAPPER_CHECK_PTR(ctx, T, end_length, end_ids);
   WRAPPER_CHECK_PTR(ctx, T, bs, seq_lens);
+  WRAPPER_CHECK_PTR(ctx, T, bs * pre_ids_len, pre_ids);
+  WRAPPER_CHECK_PTR(ctx, T, bs, step_idx);
+  WRAPPER_CHECK_PTR(ctx, T, bs * stop_seqs_bs * stop_seqs_max_len, stop_seqs);
+  WRAPPER_CHECK_PTR(ctx, int, bs * stop_seqs_bs, stop_seqs_len);
   WRAPPER_ASSERT_LE(ctx, end_length, 1024);  // assume end_length <= 1024
   bool prefill_one_step_stop = false;
   if (const char *env_p = std::getenv("PREFILL_NODE_ONE_STEP_STOP")) {
@@ -148,8 +219,15 @@ int set_stop_value_multi_ends(Context *ctx,
                           next_tokens,
                           end_ids,
                           seq_lens,
+                          pre_ids,
+                          step_idx,
+                          stop_seqs,
+                          stop_seqs_len,
                           bs,
                           end_length,
+                          stop_seqs_bs,
+                          stop_seqs_max_len,
+                          pre_ids_len,
                           beam_search,
                           prefill_one_step_stop);
   }
@@ -160,8 +238,15 @@ int set_stop_value_multi_ends(Context *ctx,
                            next_tokens,
                            end_ids,
                            seq_lens,
+                          pre_ids,
+                          step_idx,
+                          stop_seqs,
+                          stop_seqs_len,
                            bs,
                            end_length,
+                          stop_seqs_bs,
+                          stop_seqs_max_len,
+                          pre_ids_len,
                            beam_search,
                            prefill_one_step_stop);
   }
@@ -174,8 +259,15 @@ template int set_stop_value_multi_ends<int64_t>(Context *ctx,
                                                 int64_t *next_tokens,
                                                 const int64_t *end_ids,
                                                 const int *seq_lens,
+                                                const int64_t *pre_ids,
+                                                const int64_t *step_idx,
+                                                const int64_t *stop_seqs,
+                                                const int *stop_seqs_len,
                                                 const int bs,
                                                 const int end_length,
+                                                const int stop_seqs_bs,
+                                                const int stop_seqs_max_len,
+                                                const int pre_ids_len,
                                                 const bool beam_search);
 }  // namespace plugin
 }  // namespace api
